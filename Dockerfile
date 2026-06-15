@@ -20,6 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg lsb-release \
         git openssh-server sudo \
+        iproute2 \
         ripgrep jq vim nano less htop tmux \
         build-essential \
         python3 python3-pip python3-venv pipx \

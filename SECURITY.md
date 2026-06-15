@@ -108,6 +108,25 @@ The key then never sits in env or on disk at rest.
 - **Scoped sudo (not blanket root).** `sudoers.d/agent` allows only package commands.
   This stops casual escalation, but note `sudo apt-get` can run root package scripts —
   for maximum lockdown, remove the sudoers file and pre-install everything at build time.
+- **Cloud-metadata theft — mitigated.** The entrypoint installs blackhole routes to
+  the cloud instance-metadata IPs (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`,
+  IPv6 `fd00:ec2::254`) so the agent can't pull the host's IAM/cloud credentials. This
+  needs the `NET_ADMIN` cap (granted in compose); the route is set by root at boot and
+  the non-root agent can't remove it (`ip` isn't in its sudo allowlist).
+  - **Gap (be honest):** this protects the **workspace** container. Containers the agent
+    spins up *inside dind* egress through dind's own network stack and are **not** covered
+    by the workspace's routes. To cover everything, add the host-firewall rule below.
+  - **Complete coverage (host, optional but recommended on a cloud VM):** scope a drop to
+    the agent's containers so you don't break prod's legitimate metadata use:
+    ```bash
+    # On the Docker host. Find the workspace/dind bridge subnet first:
+    #   docker network inspect <stack>_default <stack>_dind | grep Subnet
+    iptables  -I DOCKER-USER -s <those-subnets> -d 169.254.169.254 -j DROP
+    iptables  -I DOCKER-USER -s <those-subnets> -d 169.254.170.2   -j DROP
+    ip6tables -I DOCKER-USER -s <those-subnet6> -d fd00:ec2::254   -j DROP 2>/dev/null || true
+    ```
+    A blanket (no `-s`) rule blocks metadata for **all** containers including prod — only
+    do that if no prod app relies on instance IAM. On AWS also enforce IMDSv2 + hop-limit 1.
 - **Network reach (important on a shared host).** Docker keeps the workspace off your
   other apps' networks, so the agent can't directly dial prod containers by name. But
   it **can** reach (a) anything your prod apps publish on the host's ports, and (b) the
@@ -160,6 +179,8 @@ Do these in addition:
 - [ ] Rootless dind smoke-tested (`docker info` / `docker run hello-world`)
 - [ ] CPU/memory limits set on workspace + docker services
 - [ ] Prod published ports bound to 127.0.0.1, not 0.0.0.0
+- [ ] Cloud-metadata blocked — verify `curl -m2 http://169.254.169.254/` from the
+      workspace times out; add the host-firewall rule to also cover dind containers
 - [ ] Docker via isolated dind (default) — host socket NOT mounted
 - [ ] Sudo is scoped (default), or removed entirely for maximum lockdown
 - [ ] Running on a dedicated VM if the work is sensitive (dind is privileged)

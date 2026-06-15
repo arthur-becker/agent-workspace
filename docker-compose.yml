@@ -12,6 +12,10 @@ services:
       dockerfile: Dockerfile
     image: agent-workspace:latest
     restart: unless-stopped
+    # Lets the entrypoint install blackhole routes to cloud-metadata IPs (and
+    # nothing else — the non-root agent can't use this cap). See SECURITY.md.
+    cap_add:
+      - NET_ADMIN
     environment:
       # --- SSH (paths 1 & 2) ---
       AUTHORIZED_KEYS: "${AUTHORIZED_KEYS:-}"   # your SSH public key(s), newline-separated
