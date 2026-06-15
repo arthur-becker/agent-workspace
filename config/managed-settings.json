@@ -1,19 +1,13 @@
 {
-  "$comment": "Claude Code MANAGED settings — baked to /etc/claude-code/managed-settings.json. These are the highest-precedence settings and cannot be overridden by user/project settings. Defense-in-depth against ACCIDENTAL agent actions; NOT a sandbox (the agent has sudo). See SECURITY.md.",
+  "$comment": "Claude Code MANAGED settings — baked to /etc/claude-code/managed-settings.json. These are the highest-precedence settings and cannot be overridden by user/project settings. Defense-in-depth against ACCIDENTAL agent actions. The agent user has NO sudo, no Docker, and no git remote credentials (so it can't push/alter remotes); these rules mainly prevent wasted attempts and accidents. See SECURITY.md.",
   "permissions": {
-    "ask": [
-      "Bash(docker build:*)",
-      "Bash(docker buildx:*)",
-      "Bash(docker compose build:*)",
-      "Bash(docker push:*)"
-    ],
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git push --force-with-lease:*)",
-      "Bash(git push --mirror:*)",
-      "Bash(git push --delete:*)",
-      "Bash(git push --no-verify:*)",
+      "Bash(sudo:*)",
+      "Bash(docker:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git fetch:*)",
+      "Bash(git ls-remote:*)",
       "Bash(env)",
       "Bash(printenv:*)",
       "Bash(export -p)",

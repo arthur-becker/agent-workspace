@@ -2,10 +2,16 @@
 # Defense-in-depth: block force pushes (non-fast-forward) and remote ref deletions.
 #
 # Installed system-wide via `git config --system core.hooksPath /etc/git-hooks`.
-# CAVEAT: a hook is bypassable with `git push --no-verify` and by `sudo`. This
-# stops ACCIDENTAL history rewrites, not a determined actor. The real guarantee
-# is branch protection on the remote. See SECURITY.md.
+# Scope: enforced ONLY for the `agent` user; the human `admin` is unrestricted and
+# can force-push freely. (In practice the agent can't push at all — the git wrapper
+# and lack of credentials stop it first — so this is a belt-and-suspenders backstop.)
+# CAVEAT: a hook is bypassable with `git push --no-verify` and by `sudo`. This stops
+# ACCIDENTAL history rewrites, not a determined actor. The real guarantee is branch
+# protection on the remote. See SECURITY.md.
 set -uo pipefail
+
+# Admin / root / anyone but the agent: allow everything.
+[[ "$(id -un)" != "agent" ]] && exit 0
 
 zero="0000000000000000000000000000000000000000"
 status=0
