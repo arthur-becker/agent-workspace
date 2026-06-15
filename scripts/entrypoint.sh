@@ -44,15 +44,12 @@ if [[ -S /var/run/docker.sock ]]; then
   log "Docker socket detected; ${USERNAME} added to group ${TARGET_GROUP} (gid ${SOCK_GID})."
 fi
 
-# --- 3. Pass through Anthropic creds if provided -----------------------------
-# Optional: set ANTHROPIC_API_KEY in the env for non-interactive auth.
-# Otherwise just run `claude` after connecting and log in interactively.
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" > "${USER_HOME}/.anthropic_env"
-  grep -q anthropic_env "${USER_HOME}/.bashrc" 2>/dev/null \
-    || echo "[ -f ~/.anthropic_env ] && source ~/.anthropic_env" >> "${USER_HOME}/.bashrc"
-  chown "${USERNAME}:${USERNAME}" "${USER_HOME}/.anthropic_env"
-fi
+# --- 3. Claude Code auth -----------------------------------------------------
+# By design, NO Anthropic secret is injected into the agent's environment.
+# Log in interactively the first time you connect:  `claude`  (the OAuth token
+# is stored in ~/.claude, persisted by the volume). This is what keeps the key
+# out of `env` / `/proc/*/environ` for the agent. See SECURITY.md for the
+# advanced `apiKeyHelper` option if you need non-interactive auth.
 
 # Make sure the home + workspace are owned by the user (volumes can reset this).
 chown "${USERNAME}:${USERNAME}" "${USER_HOME}" "${WORKSPACE:-/workspace}" 2>/dev/null || true

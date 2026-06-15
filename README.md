@@ -11,6 +11,8 @@ persistent dev box wired for **Claude Code**, reachable three ways:
 
 **Baked in:** Node.js 22 (runs Claude Code), Python 3 + `uv`/`pip`, Bun, Docker CLI, git, ripgrep, jq, tmux, build tools.
 
+> ⚠️ This box runs an autonomous agent with shell access. **Read [SECURITY.md](SECURITY.md)** before exposing it — it covers force-push protection, keeping secrets out of the agent's env, the Docker-socket/sudo trade-offs, and a hardening checklist.
+
 ## Layout
 
 ```

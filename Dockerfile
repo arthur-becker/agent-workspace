@@ -67,6 +67,14 @@ RUN mkdir -p /var/run/sshd
 # Persisted at runtime via volumes (see compose): projects + agent home (creds/config)
 RUN mkdir -p /workspace && chown ${USERNAME}:${USERNAME} /workspace
 
+# --- Security guardrails (defense-in-depth; see SECURITY.md) ---
+# Claude Code managed settings: highest precedence, not overridable by user/project.
+COPY config/managed-settings.json /etc/claude-code/managed-settings.json
+# System-wide git pre-push hook: blocks force pushes & remote ref deletions.
+COPY config/git-hooks/pre-push /etc/git-hooks/pre-push
+RUN chmod +x /etc/git-hooks/pre-push \
+    && git config --system core.hooksPath /etc/git-hooks
+
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
