@@ -1,0 +1,38 @@
+# Dokploy "Compose" deployment for the Claude Code agent workspace.
+#
+# In Dokploy: create a Compose service, point it at this repo, and set the
+# environment variables below in the UI (or via the .env). Then add a Domain
+# pointing at the "workspace" service container port 8080 to reach browser VS Code,
+# and publish port 22 (mapped to SSH_PUBLISH_PORT) for SSH / Remote-SSH.
+
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent-workspace:latest
+    restart: unless-stopped
+    environment:
+      # --- SSH (paths 1 & 2) ---
+      AUTHORIZED_KEYS: "${AUTHORIZED_KEYS:-}"   # your SSH public key(s), newline-separated
+      SSH_PASSWORD: "${SSH_PASSWORD:-}"         # optional; leave empty to force key-only auth
+      # --- code-server / browser VS Code (path 3) ---
+      CODE_SERVER_PASSWORD: "${CODE_SERVER_PASSWORD:-}"
+      CODE_SERVER_PORT: "8080"
+      # --- Claude Code auth (optional; else log in interactively with `claude`) ---
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    ports:
+      # host:container — SSH. Pick a free host port in Dokploy (e.g. 2222).
+      - "${SSH_PUBLISH_PORT:-2222}:22"
+    expose:
+      - "8080"   # code-server — routed by Dokploy's Traefik via a Domain
+    volumes:
+      # Persist projects and the agent home (Claude creds, code-server state, shell history).
+      - workspace-projects:/workspace
+      - workspace-home:/home/agent
+      # Let the agent drive the host Docker daemon. Remove if you don't want this.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  workspace-projects:
+  workspace-home:
