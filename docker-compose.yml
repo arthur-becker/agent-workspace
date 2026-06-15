@@ -17,9 +17,13 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      # --- SSH (paths 1 & 2) ---
-      AUTHORIZED_KEYS: "${AUTHORIZED_KEYS:-}"   # your SSH public key(s), newline-separated
+      # --- SSH for the AGENT account (runs Claude Code; NO sudo) ---
+      AUTHORIZED_KEYS: "${AUTHORIZED_KEYS:-}"   # agent's SSH public key(s), newline-separated
       SSH_PASSWORD: "${SSH_PASSWORD:-}"         # optional; leave empty to force key-only auth
+      # --- SSH for the ADMIN account (human break-glass; FULL sudo) ---
+      # Log in as `admin` to run apt / change the system. The agent never uses this.
+      ADMIN_AUTHORIZED_KEYS: "${ADMIN_AUTHORIZED_KEYS:-}"  # admin's SSH public key(s)
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"     # optional; with NOPASSWD sudo this = root, prefer keys
       # --- code-server / browser VS Code (path 3) ---
       CODE_SERVER_PASSWORD: "${CODE_SERVER_PASSWORD:-}"
       CODE_SERVER_PORT: "8080"
@@ -36,55 +40,32 @@ services:
       # Persist projects and the agent home (Claude creds, code-server state, shell history).
       - workspace-projects:/workspace
       - workspace-home:/home/agent
+      # Persist the agent's GLOBAL packages + caches so a restart/redeploy does NOT
+      # reinstall them: npm -g, bun, uv tools/pythons, and build caches.
+      - agent-npm-global:/home/agent/.npm-global
+      - agent-bun:/home/agent/.bun
+      - agent-uv:/home/agent/.local/share/uv
+      - agent-cache:/home/agent/.cache
     # Recommended on a shared prod host: cap resources so the agent can't starve prod.
     # Uncomment and tune to your host (or set in Dokploy's UI).
     # deploy:
     #   resources:
     #     limits: { cpus: "2", memory: 4g }
-    depends_on:
-      - docker
     networks:
       - default      # reachable by Dokploy/Traefik for the code-server domain
-      - dind         # private link to the isolated Docker daemon
 
-  # ROOTLESS Docker-in-Docker. The agent's `docker` CLI builds AND runs
-  # containers HERE — not on the host. Crucially this runs WITHOUT privileged:
-  # the daemon and everything it spawns are an unprivileged, user-namespaced
-  # user, so an escape can't become host root. Safe(r) to run alongside prod.
-  # NOTE: requires a host with cgroup v2 (default on Ubuntu 22.04+/recent Debian).
-  # This config should be smoke-tested on YOUR host — see SECURITY.md.
-  docker:
-    image: docker:27-dind-rootless
-    restart: unless-stopped
-    # No `privileged: true`. Rootless needs nested user namespaces, which the
-    # default seccomp/apparmor profiles block — hence unconfined here. Combined
-    # with rootless (no real root) this is far weaker than a privileged daemon.
-    security_opt:
-      - seccomp=unconfined
-      - apparmor=unconfined
-    devices:
-      - /dev/fuse        # fuse-overlayfs storage driver (remove if host lacks it)
-    environment:
-      DOCKER_TLS_CERTDIR: ""          # plain TCP on the private 'dind' network only
-    command: ["--host=tcp://0.0.0.0:2375"]
-    volumes:
-      # Rootless daemon stores data under the rootless user's home, not /var/lib/docker.
-      - dind-storage:/home/rootless/.local/share/docker
-    # deploy:
-    #   resources:
-    #     limits: { cpus: "2", memory: 4g }
-    networks:
-      - dind
-    # No `ports:` — 2375 is only reachable by the workspace over the private network.
+# NOTE: Docker (the rootless dind sidecar) has been removed entirely — the agent
+# cannot build or run containers. This drops the largest piece of attack surface
+# (no Docker daemon, no nested user namespaces, no `seccomp/apparmor=unconfined`).
+# To restore it, see git history for the `docker:dind-rootless` service.
 
 volumes:
   workspace-projects:
   workspace-home:
-  dind-storage:
+  agent-npm-global:
+  agent-bun:
+  agent-uv:
+  agent-cache:
 
 networks:
   default:
-  dind:
-    # Private link between workspace <-> dind. Port 2375 is unreachable from the
-    # host/internet (no published port). NOT marked `internal` so dind can still
-    # pull base images from registries during `docker build`.
