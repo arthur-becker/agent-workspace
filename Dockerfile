@@ -54,7 +54,11 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh
 # packages, edit root-owned guardrails, or escalate. Everything it needs installs
 # user-space (npm/uv/pip/bun into its home; see below). System changes require
 # logging in as the separate `${ADMINNAME}` account.
-RUN groupadd --gid ${USER_GID} ${USERNAME} \
+# The node:22 base ships a `node` user/group at UID/GID 1000 — remove it so we can
+# claim 1000 for `agent`.
+RUN (userdel -r node 2>/dev/null || true) \
+    && (groupdel node 2>/dev/null || true) \
+    && groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash ${USERNAME}
 
 # --- Admin user: FULL sudo, for HUMAN break-glass login only ---
