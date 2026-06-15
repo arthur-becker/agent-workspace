@@ -45,19 +45,25 @@ RUN npm install -g @anthropic-ai/claude-code
 # --- code-server (browser VS Code) ---
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# --- Non-root user with passwordless sudo ---
+# --- Non-root user with SCOPED sudo (NOT blanket root; see SECURITY.md) ---
+# Only package management is allowed via sudo so the agent can't escalate to
+# remove its own guardrails or read root-owned files. visudo -c validates syntax.
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash ${USERNAME} \
-    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
+    && printf '%s\n' \
+        '# Scoped sudo: package management only.' \
+        "${USERNAME} ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg, /usr/sbin/service" \
+        > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME} \
-    # docker group so the mounted socket is usable; GID is fixed up at runtime
-    && groupadd -f docker && usermod -aG docker ${USERNAME}
+    && visudo -cf /etc/sudoers.d/${USERNAME}
 
-# --- Bun (installed for the agent user) ---
+# --- Bun + user-space npm prefix (so the agent installs without sudo) ---
 USER ${USERNAME}
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash \
+    && mkdir -p /home/${USERNAME}/.npm-global
 ENV BUN_INSTALL="/home/${USERNAME}/.bun"
-ENV PATH="/home/${USERNAME}/.bun/bin:${PATH}"
+ENV NPM_CONFIG_PREFIX="/home/${USERNAME}/.npm-global"
+ENV PATH="/home/${USERNAME}/.npm-global/bin:/home/${USERNAME}/.bun/bin:${PATH}"
 
 USER root
 
@@ -79,6 +85,8 @@ COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV WORKSPACE=/workspace
+# Docker CLI talks to the ISOLATED dind sidecar (not the host daemon). See compose.
+ENV DOCKER_HOST="tcp://docker:2375"
 WORKDIR /workspace
 
 # 22 = SSH (paths 1 & 2), 8080 = code-server (path 3)

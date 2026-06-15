@@ -68,9 +68,11 @@ claude            # first run: log in interactively
   code-server uses; if it isn't listed there, use the integrated terminal (the CLI is identical).
 
 ## Notes & knobs
-- **Docker-in-workspace:** the host Docker socket is mounted so the agent can build/run containers.
-  The entrypoint aligns the in-container `docker` group to the socket's GID automatically. Remove the
-  `/var/run/docker.sock` volume in `docker-compose.yml` if you don't want this.
-- **Key-only SSH:** leave `SSH_PASSWORD` empty (default). Root login is disabled; you connect as `agent` (passwordless sudo).
+- **Docker-in-workspace (isolated):** the `docker` CLI talks to a separate `docker:dind`
+  sidecar over a private network — **not** the host daemon — so the agent can build/run
+  containers without reaching the host or your other Dokploy apps. Image builds
+  (`docker build`/`push`) require interactive confirmation. Delete the `docker` service
+  and `DOCKER_HOST` env to remove Docker entirely. See [SECURITY.md](SECURITY.md).
+- **Key-only SSH:** leave `SSH_PASSWORD` empty (default). Root login is disabled; you connect as `agent` (scoped sudo — package management only).
 - **Auth for code-server:** if you leave `CODE_SERVER_PASSWORD` empty, code-server runs with `--auth none` — only do that if you put Dokploy/Traefik auth in front of the domain.
 - **Resize/scale:** it's a normal container — bump CPU/RAM in Dokploy as needed.

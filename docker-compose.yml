@@ -32,9 +32,37 @@ services:
       # Persist projects and the agent home (Claude creds, code-server state, shell history).
       - workspace-projects:/workspace
       - workspace-home:/home/agent
-      # Let the agent drive the host Docker daemon. Remove if you don't want this.
-      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - docker
+    networks:
+      - default      # reachable by Dokploy/Traefik for the code-server domain
+      - dind         # private link to the isolated Docker daemon
+
+  # Isolated Docker-in-Docker daemon. The agent's `docker` CLI builds/runs
+  # containers HERE — not on the host. The host daemon and your other
+  # Dokploy apps are NOT reachable from the agent. (See SECURITY.md for the
+  # honest caveat: this dind container is privileged, so prefer a dedicated VM.)
+  docker:
+    image: docker:27-dind
+    privileged: true
+    restart: unless-stopped
+    environment:
+      DOCKER_TLS_CERTDIR: ""          # plain TCP on the private 'dind' network only
+    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    volumes:
+      - dind-storage:/var/lib/docker  # images/containers persist across restarts
+    networks:
+      - dind
+    # No `ports:` — 2375 is only reachable by the workspace over the private network.
 
 volumes:
   workspace-projects:
   workspace-home:
+  dind-storage:
+
+networks:
+  default:
+  dind:
+    # Private link between workspace <-> dind. Port 2375 is unreachable from the
+    # host/internet (no published port). NOT marked `internal` so dind can still
+    # pull base images from registries during `docker build`.

@@ -5,18 +5,26 @@ that can run arbitrary code as the `agent` user**. Design your controls around
 that, not around trusting the agent to behave.
 
 ## The one thing to internalize
-The `agent` user has **passwordless `sudo`** (for a usable dev box). Therefore
-**every in-container guardrail below is bypassable by the agent itself** (`sudo`,
-`--no-verify`, calling the real binary directly). In-container controls reduce
-**accidents** — the normal case where Claude Code respects the rules it's given.
-They are **not a sandbox** against a deliberately adversarial agent.
+This setup is hardened so the agent's blast radius is **its own container and the
+repos it has write access to — and nothing else.** Two facts shape that:
 
-Real guarantees come from outside the container:
+1. **Scoped `sudo`.** The `agent` user can only `sudo` package-management commands
+   (`apt-get`/`apt`/`dpkg`/`service`) — not blanket root. It cannot freely escalate
+   to delete guardrails or read root-owned files. (Caveat: `sudo apt-get` runs
+   package scripts as root, so a determined agent could still reach container-root
+   through it — but that's now contained to a host-isolated container, see below.)
+2. **No host reach.** The host Docker socket is **not** mounted. Docker runs in an
+   isolated dind sidecar, so the agent can't touch the host daemon or your other
+   Dokploy apps.
+
+In-container controls still primarily prevent **accidents**. The hard guarantees
+for your two stated concerns come from **outside** the container:
+
 | Concern | Real guarantee (outside) | In-container defense-in-depth (this repo) |
 |---|---|---|
 | Force-push / rewriting your repos | **Remote branch protection** (GitHub/GitLab) | pre-push hook + Claude deny rules |
 | Secrets leaking via env | **Don't put secrets in env** (interactive login) | deny rules on `env`/cred files |
-| Agent escaping the box | **No `--privileged`, drop the docker socket, run on an isolated VM** | non-root user, key-only SSH |
+| Agent reaching the host | **Isolated dind (no host socket) + dedicated VM** | scoped sudo, non-root user, key-only SSH |
 
 ---
 
@@ -73,16 +81,21 @@ The key then never sits in env or on disk at rest.
 
 ## Other risks worth knowing
 
-- **Docker socket = root on the host.** Mounting `/var/run/docker.sock` lets the
-  agent start host containers (including privileged ones) — effectively host root.
-  It's included because you asked for the Docker CLI. **Remove the `/var/run/docker.sock`
-  line in `docker-compose.yml` unless you need it**; the CLI still installs fine,
-  it just won't connect. If you need container builds without host access, consider
-  a rootless/nested daemon instead.
-- **Passwordless sudo.** Convenient, but it defeats the in-container guardrails. If
-  your threat model includes an untrusted agent, remove the `sudoers.d/agent` rule in
-  the Dockerfile (or restrict it to specific commands) and pre-install everything the
-  agent needs at build time.
+- **Docker = isolated dind, not the host.** The `docker` CLI points at a separate
+  `docker:dind` sidecar (`DOCKER_HOST=tcp://docker:2375`) on a private network
+  with no published port (2375 is unreachable from host/internet). The agent
+  builds/runs containers there; it **cannot** see
+  the host daemon or your other Dokploy apps. **Honest caveat:** the dind sidecar
+  itself runs `privileged: true`, so a container-escape *from inside dind* would land
+  on the host — far harder than the host socket (which was direct host-root), but not
+  zero. For sensitive work, still run on a dedicated VM. To drop Docker entirely,
+  delete the `docker` service + `DOCKER_HOST` env; the CLI just won't connect.
+- **Image builds require confirmation.** `docker build`/`buildx`/`compose build`/`push`
+  are in the managed-settings `ask` list, so the agent must get an interactive
+  approval (you build images manually / on demand, not silently).
+- **Scoped sudo (not blanket root).** `sudoers.d/agent` allows only package commands.
+  This stops casual escalation, but note `sudo apt-get` can run root package scripts —
+  for maximum lockdown, remove the sudoers file and pre-install everything at build time.
 - **Network isolation.** The agent can reach anything the container can. For sensitive
   setups, run this on a dedicated VM/network segment, not next to production.
 - **code-server auth.** Always set `CODE_SERVER_PASSWORD` (or front it with Dokploy
@@ -98,6 +111,6 @@ The key then never sits in env or on disk at rest.
 - [ ] `ANTHROPIC_API_KEY` not in env (interactive login or `apiKeyHelper`)
 - [ ] `CODE_SERVER_PASSWORD` set, domain on HTTPS
 - [ ] SSH key-only, sensible published port
-- [ ] Docker socket removed unless genuinely needed
-- [ ] Decided whether passwordless sudo is acceptable for your threat model
-- [ ] Running on an isolated VM if the work is sensitive
+- [ ] Docker via isolated dind (default) — host socket NOT mounted
+- [ ] Sudo is scoped (default), or removed entirely for maximum lockdown
+- [ ] Running on a dedicated VM if the work is sensitive (dind is privileged)

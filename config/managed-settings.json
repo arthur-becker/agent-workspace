@@ -1,6 +1,12 @@
 {
   "$comment": "Claude Code MANAGED settings — baked to /etc/claude-code/managed-settings.json. These are the highest-precedence settings and cannot be overridden by user/project settings. Defense-in-depth against ACCIDENTAL agent actions; NOT a sandbox (the agent has sudo). See SECURITY.md.",
   "permissions": {
+    "ask": [
+      "Bash(docker build:*)",
+      "Bash(docker buildx:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker push:*)"
+    ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",

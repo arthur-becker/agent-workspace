@@ -31,18 +31,10 @@ sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 # Generate host keys on first boot (persisted via the home/etc volume if mounted).
 ssh-keygen -A >/dev/null 2>&1 || true
 
-# --- 2. Docker socket permissions -------------------------------------------
-# If the host's docker socket is mounted, align the in-container docker group
-# GID to the socket's owner GID so ${USERNAME} can use it without root.
-if [[ -S /var/run/docker.sock ]]; then
-  SOCK_GID="$(stat -c '%g' /var/run/docker.sock)"
-  if ! getent group "${SOCK_GID}" >/dev/null; then
-    groupmod -g "${SOCK_GID}" docker 2>/dev/null || groupadd -g "${SOCK_GID}" dockerhost
-  fi
-  TARGET_GROUP="$(getent group "${SOCK_GID}" | cut -d: -f1)"
-  usermod -aG "${TARGET_GROUP}" "${USERNAME}" || true
-  log "Docker socket detected; ${USERNAME} added to group ${TARGET_GROUP} (gid ${SOCK_GID})."
-fi
+# --- 2. Docker ---------------------------------------------------------------
+# No host socket is mounted. The `docker` CLI reaches the ISOLATED dind sidecar
+# over TCP via DOCKER_HOST (tcp://docker:2375), set in the image. Nothing to do
+# here; the daemon comes up as a separate compose service. See SECURITY.md.
 
 # --- 3. Claude Code auth -----------------------------------------------------
 # By design, NO Anthropic secret is injected into the agent's environment.
