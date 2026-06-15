@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Force Claude Code to ALWAYS run as the unprivileged `agent` user — no matter who
+# launches it (the `admin` shell, root, or the VS Code extension calling the binary
+# directly). This is what lets you connect as `admin` (full sudo one command away)
+# while Claude itself stays sandboxed as `agent` (no sudo, no escalation).
+# The real CLI lives at claude.real. See SECURITY.md.
+set -euo pipefail
+REAL="/usr/local/bin/claude.real"
+
+# Already the agent? Run the real CLI directly.
+if [[ "$(id -un)" == "agent" ]]; then
+  exec "$REAL" "$@"
+fi
+
+# Otherwise (admin/root) re-exec as `agent`, preserving the current working
+# directory so Claude operates on your project. Run it from /workspace, which the
+# agent owns; a directory the agent can't read (e.g. /home/admin) is rejected.
+dir="$PWD"
+if ! sudo -n -u agent test -r "$dir" 2>/dev/null; then
+  echo "claude: the 'agent' user can't read '$dir' (or passwordless sudo is unavailable)." >&2
+  echo "       cd into /workspace (agent-owned) and try again." >&2
+  exit 1
+fi
+exec sudo -u agent --set-home bash -lc 'cd "$0" && exec "$1" "${@:2}"' "$dir" "$REAL" "$@"
