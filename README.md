@@ -68,11 +68,13 @@ claude            # first run: log in interactively
   code-server uses; if it isn't listed there, use the integrated terminal (the CLI is identical).
 
 ## Notes & knobs
-- **Docker-in-workspace (isolated):** the `docker` CLI talks to a separate `docker:dind`
-  sidecar over a private network — **not** the host daemon — so the agent can build/run
-  containers without reaching the host or your other Dokploy apps. Image builds
+- **Docker-in-workspace (rootless, isolated):** the `docker` CLI talks to a separate
+  **rootless** `docker:dind-rootless` sidecar over a private network — **not** the host
+  daemon, and **without `privileged`** — so the agent can build *and* run containers
+  without any path to host root. This is what makes it safe to run next to production.
+  Needs a cgroup-v2 host; smoke-test after deploy (see SECURITY.md). Image builds
   (`docker build`/`push`) require interactive confirmation. Delete the `docker` service
-  and `DOCKER_HOST` env to remove Docker entirely. See [SECURITY.md](SECURITY.md).
+  and `DOCKER_HOST` env to remove Docker entirely.
 - **Key-only SSH:** leave `SSH_PASSWORD` empty (default). Root login is disabled; you connect as `agent` (scoped sudo — package management only).
 - **Auth for code-server:** if you leave `CODE_SERVER_PASSWORD` empty, code-server runs with `--auth none` — only do that if you put Dokploy/Traefik auth in front of the domain.
 - **Resize/scale:** it's a normal container — bump CPU/RAM in Dokploy as needed.

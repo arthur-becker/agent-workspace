@@ -32,25 +32,43 @@ services:
       # Persist projects and the agent home (Claude creds, code-server state, shell history).
       - workspace-projects:/workspace
       - workspace-home:/home/agent
+    # Recommended on a shared prod host: cap resources so the agent can't starve prod.
+    # Uncomment and tune to your host (or set in Dokploy's UI).
+    # deploy:
+    #   resources:
+    #     limits: { cpus: "2", memory: 4g }
     depends_on:
       - docker
     networks:
       - default      # reachable by Dokploy/Traefik for the code-server domain
       - dind         # private link to the isolated Docker daemon
 
-  # Isolated Docker-in-Docker daemon. The agent's `docker` CLI builds/runs
-  # containers HERE — not on the host. The host daemon and your other
-  # Dokploy apps are NOT reachable from the agent. (See SECURITY.md for the
-  # honest caveat: this dind container is privileged, so prefer a dedicated VM.)
+  # ROOTLESS Docker-in-Docker. The agent's `docker` CLI builds AND runs
+  # containers HERE — not on the host. Crucially this runs WITHOUT privileged:
+  # the daemon and everything it spawns are an unprivileged, user-namespaced
+  # user, so an escape can't become host root. Safe(r) to run alongside prod.
+  # NOTE: requires a host with cgroup v2 (default on Ubuntu 22.04+/recent Debian).
+  # This config should be smoke-tested on YOUR host — see SECURITY.md.
   docker:
-    image: docker:27-dind
-    privileged: true
+    image: docker:27-dind-rootless
     restart: unless-stopped
+    # No `privileged: true`. Rootless needs nested user namespaces, which the
+    # default seccomp/apparmor profiles block — hence unconfined here. Combined
+    # with rootless (no real root) this is far weaker than a privileged daemon.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    devices:
+      - /dev/fuse        # fuse-overlayfs storage driver (remove if host lacks it)
     environment:
       DOCKER_TLS_CERTDIR: ""          # plain TCP on the private 'dind' network only
-    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    command: ["--host=tcp://0.0.0.0:2375"]
     volumes:
-      - dind-storage:/var/lib/docker  # images/containers persist across restarts
+      # Rootless daemon stores data under the rootless user's home, not /var/lib/docker.
+      - dind-storage:/home/rootless/.local/share/docker
+    # deploy:
+    #   resources:
+    #     limits: { cpus: "2", memory: 4g }
     networks:
       - dind
     # No `ports:` — 2375 is only reachable by the workspace over the private network.

@@ -13,9 +13,11 @@ repos it has write access to — and nothing else.** Two facts shape that:
    to delete guardrails or read root-owned files. (Caveat: `sudo apt-get` runs
    package scripts as root, so a determined agent could still reach container-root
    through it — but that's now contained to a host-isolated container, see below.)
-2. **No host reach.** The host Docker socket is **not** mounted. Docker runs in an
-   isolated dind sidecar, so the agent can't touch the host daemon or your other
-   Dokploy apps.
+2. **No host reach, no privileged container.** The host Docker socket is **not**
+   mounted. Docker runs in a **rootless** dind sidecar (no `privileged: true`), so
+   the agent can't touch the host daemon, and even a container escape from dind
+   lands as an unprivileged, user-namespaced user — not host root. This is what
+   makes it acceptable to run **on the same host as production apps**.
 
 In-container controls still primarily prevent **accidents**. The hard guarantees
 for your two stated concerns come from **outside** the container:
@@ -24,7 +26,7 @@ for your two stated concerns come from **outside** the container:
 |---|---|---|
 | Force-push / rewriting your repos | **Remote branch protection** (GitHub/GitLab) | pre-push hook + Claude deny rules |
 | Secrets leaking via env | **Don't put secrets in env** (interactive login) | deny rules on `env`/cred files |
-| Agent reaching the host | **Isolated dind (no host socket) + dedicated VM** | scoped sudo, non-root user, key-only SSH |
+| Agent reaching the host / prod | **Rootless dind (no host socket, no privileged)** | scoped sudo, non-root user, key-only SSH |
 
 ---
 
@@ -81,23 +83,38 @@ The key then never sits in env or on disk at rest.
 
 ## Other risks worth knowing
 
-- **Docker = isolated dind, not the host.** The `docker` CLI points at a separate
-  `docker:dind` sidecar (`DOCKER_HOST=tcp://docker:2375`) on a private network
-  with no published port (2375 is unreachable from host/internet). The agent
-  builds/runs containers there; it **cannot** see
-  the host daemon or your other Dokploy apps. **Honest caveat:** the dind sidecar
-  itself runs `privileged: true`, so a container-escape *from inside dind* would land
-  on the host — far harder than the host socket (which was direct host-root), but not
-  zero. For sensitive work, still run on a dedicated VM. To drop Docker entirely,
-  delete the `docker` service + `DOCKER_HOST` env; the CLI just won't connect.
+- **Docker = ROOTLESS dind, not the host.** The `docker` CLI points at a separate
+  `docker:dind-rootless` sidecar (`DOCKER_HOST=tcp://docker:2375`) on a private
+  network with no published port (2375 is unreachable from host/internet). It runs
+  **without `privileged`** — the daemon and every container it spawns are an
+  unprivileged, user-namespaced user. The agent builds *and* runs containers there;
+  it **cannot** see the host daemon or your other Dokploy apps, and an escape from
+  dind does not yield host root. This is why it's acceptable next to production.
+  - **Requirements:** host kernel with **cgroup v2** (Ubuntu 22.04+/recent Debian —
+    Dokploy hosts usually qualify) and `/dev/fuse` for the fuse-overlayfs storage
+    driver (remove the `devices:` line if absent; it'll fall back, slower).
+  - **`seccomp=unconfined` + `apparmor=unconfined`** on the dind sidecar are needed
+    so it can create nested user namespaces. They relax that one container's syscall
+    filtering, but because it's rootless the worst case is a non-root mapped user —
+    still far weaker than the privileged daemon they replace.
+  - **Residual risk (be honest):** rootless dind + relaxed seccomp is *not* zero risk
+    next to prod — userns escapes are rare but not impossible. The strongest posture
+    is still a dedicated VM. This config is the best balance given you need build+run
+    on a shared host.
+  - To drop Docker entirely: delete the `docker` service + `DOCKER_HOST` env.
 - **Image builds require confirmation.** `docker build`/`buildx`/`compose build`/`push`
   are in the managed-settings `ask` list, so the agent must get an interactive
   approval (you build images manually / on demand, not silently).
 - **Scoped sudo (not blanket root).** `sudoers.d/agent` allows only package commands.
   This stops casual escalation, but note `sudo apt-get` can run root package scripts —
   for maximum lockdown, remove the sudoers file and pre-install everything at build time.
-- **Network isolation.** The agent can reach anything the container can. For sensitive
-  setups, run this on a dedicated VM/network segment, not next to production.
+- **Network reach (important on a shared host).** Docker keeps the workspace off your
+  other apps' networks, so the agent can't directly dial prod containers by name. But
+  it **can** reach (a) anything your prod apps publish on the host's ports, and (b) the
+  host gateway IP. If a prod DB/admin port is published on `0.0.0.0`, the agent could
+  hit it. Mitigations: bind prod published ports to `127.0.0.1` (not `0.0.0.0`), keep
+  prod service-to-service traffic on internal Docker networks (unpublished), and/or add
+  host-firewall rules blocking the workspace's subnet from prod ports.
 - **code-server auth.** Always set `CODE_SERVER_PASSWORD` (or front it with Dokploy
   auth) and serve it only over HTTPS. `--auth none` + public domain = open shell.
 - **SSH.** Key-only by default (`SSH_PASSWORD` empty), root login disabled. Keep it
@@ -105,12 +122,44 @@ The key then never sits in env or on disk at rest.
 - **Base image CVEs.** `node:22-bookworm` carries OS-level CVEs over time. Rebuild
   regularly to pull patches; pin to a digest for reproducibility if you need it.
 
+## Running on a shared host with production (your setup)
+
+You've chosen to run this next to prod on the same Dokploy host. The rootless-dind
+config above removes the biggest danger (no privileged container, no host socket).
+Do these in addition:
+
+1. **Smoke-test the rootless daemon on your host before trusting it:**
+   ```bash
+   # after deploy, from inside the workspace (ssh in):
+   docker info            # should report the rootless daemon, no errors
+   docker run --rm hello-world
+   docker build -t test - <<<'FROM alpine
+   RUN echo ok'
+   ```
+   If `docker info` errors about cgroups, your host isn't cgroup-v2 / lacks
+   delegation — tell me and we'll switch the storage/cgroup settings.
+2. **Cap resources** so a runaway agent can't starve prod — add to the `workspace`
+   and `docker` services in compose (or set in Dokploy's UI):
+   ```yaml
+   deploy:
+     resources:
+       limits: { cpus: "2", memory: 4g }
+   ```
+3. **Don't publish prod internal ports on `0.0.0.0`** — see the network note above.
+4. **Least-privilege git token** for the agent — never your full-access PAT.
+5. Accept the residual risk: rootless dind is much safer than privileged but not a
+   hard VM boundary. If a future task is highly sensitive, move *that* work to a
+   throwaway VM.
+
 ## Quick hardening checklist
 - [ ] Branch protection enabled on every remote the agent can push to
 - [ ] Agent's git token scoped to least privilege (PR-only if possible)
 - [ ] `ANTHROPIC_API_KEY` not in env (interactive login or `apiKeyHelper`)
 - [ ] `CODE_SERVER_PASSWORD` set, domain on HTTPS
 - [ ] SSH key-only, sensible published port
+- [ ] Rootless dind smoke-tested (`docker info` / `docker run hello-world`)
+- [ ] CPU/memory limits set on workspace + docker services
+- [ ] Prod published ports bound to 127.0.0.1, not 0.0.0.0
 - [ ] Docker via isolated dind (default) — host socket NOT mounted
 - [ ] Sudo is scoped (default), or removed entirely for maximum lockdown
 - [ ] Running on a dedicated VM if the work is sensitive (dind is privileged)
